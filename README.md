@@ -5,6 +5,7 @@ This workspace contains a read-only PowerShell script to inventory Enterprise Ap
 ## Script
 
 - `Get-M365EnterpriseAppInventory.ps1`
+- `install-and-run-linux.sh` (Linux prerequisite installer + runner)
 
 ## What it collects
 
@@ -53,6 +54,12 @@ Basic run:
 .\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output
 ```
 
+Use device code authentication (recommended for Linux/headless environments):
+
+```powershell
+.\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -UseDeviceCode
+```
+
 Use beta profile (helpful in some tenants for richer sign-in fields):
 
 ```powershell
@@ -76,6 +83,29 @@ Include disabled enterprise app service principals:
 ```powershell
 .\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -IncludeDisabledServicePrincipals
 ```
+
+## Linux quick start (installs requirements)
+
+From repository root:
+
+```bash
+chmod +x ./install-and-run-linux.sh
+./install-and-run-linux.sh --output ./output --lookback-days 90
+```
+
+What the Linux script does:
+
+- Installs PowerShell (Ubuntu/Debian or RHEL-family)
+- Installs/updates the `Microsoft.Graph` PowerShell module
+- Runs the read-only inventory script
+- Uses device code auth by default (best for SSH/headless sessions)
+
+Optional Linux flags:
+
+- `--use-beta`
+- `--skip-group-expansion`
+- `--include-disabled-service-principals`
+- `--no-device-code`
 
 ## Output files
 
@@ -101,3 +131,4 @@ The script writes timestamped reports:
 - Some "when added" or activity fields can be null depending on tenant data availability and role permissions.
 - User sign-in fields may require additional directory roles in your tenant even when scopes are granted.
 - App activity is determined from sign-in logs in the specified lookback window.
+- Linux prerequisite install support is included for Ubuntu/Debian and RHEL-family distributions.

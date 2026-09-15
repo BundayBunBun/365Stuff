@@ -13,7 +13,10 @@ param(
     [switch]$UseBetaProfile,
 
     [Parameter(Mandatory = $false)]
-    [switch]$IncludeDisabledServicePrincipals
+    [switch]$IncludeDisabledServicePrincipals,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$UseDeviceCode
 )
 
 Set-StrictMode -Version Latest
@@ -737,7 +740,12 @@ if (-not (Test-Path -Path $OutputFolder)) {
     New-Item -Path $OutputFolder -ItemType Directory | Out-Null
 }
 
-Connect-MgGraph -Scopes $requiredScopes -NoWelcome
+if ($UseDeviceCode) {
+    Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -NoWelcome
+}
+else {
+    Connect-MgGraph -Scopes $requiredScopes -NoWelcome
+}
 
 if ($UseBetaProfile) {
     Select-MgProfile -Name 'beta'
