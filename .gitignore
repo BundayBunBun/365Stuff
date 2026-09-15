@@ -1,0 +1,14 @@
+# PowerShell artifacts
+*.tmp
+*.log
+
+# Generated inventory outputs
+output/
+EnterpriseApps_*.csv
+EnterpriseAppPermissions_*.csv
+EnterpriseAppAssignments_*.csv
+EnterpriseAppReview_*.html
+EnterpriseAppInventory_*.json
+
+# VS Code
+.vscode/
