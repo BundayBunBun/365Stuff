@@ -102,6 +102,10 @@ What the Linux script does:
 - Uses device code auth by default (best for SSH/headless sessions)
 
 If a distro repo does not provide `powershell`, the installer automatically tries `powershell-lts`.
+If both are unavailable, it automatically tries:
+
+- `snap install powershell --classic` (when snap is available)
+- portable user-space install from official PowerShell GitHub releases (`~/.local/powershell`)
 
 Optional Linux flags:
 
