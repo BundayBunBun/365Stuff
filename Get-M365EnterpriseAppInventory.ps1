@@ -1134,14 +1134,57 @@ $jsonReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppInvento
 $htmlReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppReview_$timestamp.html"
 $missingPropertiesReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppMissingProperties_$timestamp.csv"
 
-$appRows | Sort-Object AppDisplayName | Export-Csv -NoTypeInformation -Path $appReportPath -Encoding UTF8
-$permissionRows | Sort-Object AppDisplayName, PermissionType, ResourceDisplayName, PermissionValue | Export-Csv -NoTypeInformation -Path $permissionsReportPath -Encoding UTF8
-$assignmentRows | Sort-Object AppDisplayName, AssignmentSource, AssignedPrincipalType, AssignedPrincipalDisplayName | Export-Csv -NoTypeInformation -Path $assignmentsReportPath -Encoding UTF8
+$consentedAppRows = @($appRows | Where-Object { $_.IsConsented })
+$consentedAppIdSet = [System.Collections.Generic.HashSet[string]]::new()
+foreach ($consentedApp in $consentedAppRows) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$consentedApp.AppObjectId)) {
+        [void]$consentedAppIdSet.Add([string]$consentedApp.AppObjectId)
+    }
+}
+
+$consentedPermissionRows = @($permissionRows | Where-Object { $consentedAppIdSet.Contains([string]$_.AppObjectId) })
+$consentedAssignmentRows = @($assignmentRows | Where-Object { $consentedAppIdSet.Contains([string]$_.AppObjectId) })
+
+$assignedUsersByApp = @{}
+foreach ($assignment in $consentedAssignmentRows) {
+    if ($assignment.AssignedPrincipalType -ne 'User') {
+        continue
+    }
+
+    $appKey = [string]$assignment.AppObjectId
+    if (-not $assignedUsersByApp.ContainsKey($appKey)) {
+        $assignedUsersByApp[$appKey] = [System.Collections.Generic.HashSet[string]]::new()
+    }
+
+    $userLabel = $assignment.AssignedUserPrincipalName
+    if ([string]::IsNullOrWhiteSpace($userLabel)) {
+        $userLabel = $assignment.AssignedPrincipalDisplayName
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($userLabel)) {
+        [void]$assignedUsersByApp[$appKey].Add([string]$userLabel)
+    }
+}
+
+foreach ($consentedApp in $consentedAppRows) {
+    $appKey = [string]$consentedApp.AppObjectId
+    $userList = @()
+    if ($assignedUsersByApp.ContainsKey($appKey)) {
+        $userList = @($assignedUsersByApp[$appKey] | Sort-Object)
+    }
+
+    $consentedApp | Add-Member -NotePropertyName AssignedUserCount -NotePropertyValue $userList.Count -Force
+    $consentedApp | Add-Member -NotePropertyName AssignedUsers -NotePropertyValue ($userList -join '; ') -Force
+}
+
+$consentedAppRows | Sort-Object AppDisplayName | Export-Csv -NoTypeInformation -Path $appReportPath -Encoding UTF8
+$consentedPermissionRows | Sort-Object AppDisplayName, PermissionType, ResourceDisplayName, PermissionValue | Export-Csv -NoTypeInformation -Path $permissionsReportPath -Encoding UTF8
+$consentedAssignmentRows | Sort-Object AppDisplayName, AssignmentSource, AssignedPrincipalType, AssignedPrincipalDisplayName | Export-Csv -NoTypeInformation -Path $assignmentsReportPath -Encoding UTF8
 
 New-EnterpriseAppHtmlReport `
-    -AppRows $appRows `
-    -PermissionRows $permissionRows `
-    -AssignmentRows $assignmentRows `
+    -AppRows $consentedAppRows `
+    -PermissionRows $consentedPermissionRows `
+    -AssignmentRows $consentedAssignmentRows `
     -OutputPath $htmlReportPath `
     -TenantId $context.TenantId `
     -GeneratedAtUtc ((Get-Date).ToUniversalTime().ToString('o')) `
@@ -1176,9 +1219,10 @@ $missingPropertyRows | Export-Csv -NoTypeInformation -Path $missingPropertiesRep
         Html = $htmlReportPath
         MissingProperties = $missingPropertiesReportPath
     }
-    AppCount = ($appRows | Measure-Object).Count
-    PermissionRowCount = ($permissionRows | Measure-Object).Count
-    AssignmentRowCount = ($assignmentRows | Measure-Object).Count
+    AppCount = ($consentedAppRows | Measure-Object).Count
+    PermissionRowCount = ($consentedPermissionRows | Measure-Object).Count
+    AssignmentRowCount = ($consentedAssignmentRows | Measure-Object).Count
+    TotalDiscoveredAppCount = ($appRows | Measure-Object).Count
 } | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonReportPath -Encoding utf8
 
 Write-Host "\nReport complete." -ForegroundColor Green
