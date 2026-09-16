@@ -6,6 +6,9 @@ This workspace contains a read-only PowerShell script to inventory Enterprise Ap
 
 - `Get-M365EnterpriseAppInventory.ps1`
 - `install-and-run-linux.sh` (Linux prerequisite installer + runner)
+- `m365_enterprise_app_inventory.py` (native Python, no PowerShell)
+- `install-and-run-linux-native.sh` (native Linux installer + runner)
+- `requirements-native.txt`
 
 ## What it collects
 
@@ -113,6 +116,30 @@ Optional Linux flags:
 - `--skip-group-expansion`
 - `--include-disabled-service-principals`
 - `--no-device-code`
+
+## Native Linux quick start (no PowerShell)
+
+From repository root:
+
+```bash
+chmod +x ./install-and-run-linux-native.sh
+./install-and-run-linux-native.sh --output ./output --lookback-days 90 --graph-profile beta
+```
+
+What native Linux mode does:
+
+- Installs Python 3 (if needed)
+- Creates local virtual environment (`.venv`)
+- Installs dependencies from `requirements-native.txt`
+- Runs `m365_enterprise_app_inventory.py` using Microsoft device-code auth
+- Generates the same CSV/JSON/HTML reports as the PowerShell version
+
+Native Linux options:
+
+- `--tenant <tenant-id-or-domain>`
+- `--graph-profile <v1.0|beta>`
+- `--skip-group-expansion`
+- `--include-disabled-service-principals`
 
 ## Output files
 
