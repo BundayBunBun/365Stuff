@@ -39,7 +39,8 @@ PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
 SCOPES = [
     "Application.Read.All",
-    "AppRoleAssignment.Read.All",
+    "AppRoleAssignment.ReadWrite.All",
+    "DelegatedPermissionGrant.Read.All",
     "Directory.Read.All",
     "AuditLog.Read.All",
     "User.Read.All",

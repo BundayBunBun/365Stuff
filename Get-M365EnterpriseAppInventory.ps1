@@ -32,7 +32,8 @@ $requiredModules = @(
 
 $requiredScopes = @(
     'Application.Read.All',
-    'AppRoleAssignment.Read.All',
+    'AppRoleAssignment.ReadWrite.All',
+    'DelegatedPermissionGrant.Read.All',
     'Directory.Read.All',
     'AuditLog.Read.All',
     'User.Read.All',
