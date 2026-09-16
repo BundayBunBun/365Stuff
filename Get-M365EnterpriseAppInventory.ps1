@@ -894,14 +894,14 @@ foreach ($sp in $servicePrincipals) {
     }
 
     try {
-        $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $spId -All -Property "id,appRoleId,resourceId,createdDateTime"
+        $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $spId -All -Property "id,appRoleId,resourceId"
     }
     catch {
         Write-Warning "Could not read application permission grants for app '$spDisplayName': $($_.Exception.Message)"
     }
 
     try {
-        $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $spId -All -Property "id,appRoleId,principalId,principalDisplayName,principalType,createdDateTime"
+        $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $spId -All -Property "id,appRoleId,principalId,principalDisplayName,principalType"
     }
     catch {
         Write-Warning "Could not read principal assignments for app '$spDisplayName': $($_.Exception.Message)"
@@ -910,6 +910,7 @@ foreach ($sp in $servicePrincipals) {
     foreach ($grant in $delegatedGrants) {
         $resourceSp = Get-ResourceSpFromCache -ResourceId $grant.ResourceId
         $scopes = @($grant.Scope -split ' ' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $grantCreatedDateTime = Get-SafeGraphProperty -InputObject $grant -PropertyName 'CreatedDateTime' -EntityType 'Oauth2PermissionGrant' -EntityId ([string]$grant.Id) -TrackMissing
 
         if ($scopes.Count -eq 0) {
             $permissionRows.Add([pscustomobject]@{
@@ -924,7 +925,7 @@ foreach ($sp in $servicePrincipals) {
                 ConsentType = $grant.ConsentType
                 GrantedToPrincipalId = $grant.PrincipalId
                 GrantedToPrincipal = $null
-                GrantedDateTime = To-NullableDateTimeString -Value $grant.CreatedDateTime
+                GrantedDateTime = To-NullableDateTimeString -Value $grantCreatedDateTime
             })
             continue
         }
@@ -950,13 +951,14 @@ foreach ($sp in $servicePrincipals) {
                 ConsentType = $grant.ConsentType
                 GrantedToPrincipalId = $grant.PrincipalId
                 GrantedToPrincipal = $grantedTo
-                GrantedDateTime = To-NullableDateTimeString -Value $grant.CreatedDateTime
+                GrantedDateTime = To-NullableDateTimeString -Value $grantCreatedDateTime
             })
         }
     }
 
     foreach ($grant in $applicationGrants) {
         $resourceSp = Get-ResourceSpFromCache -ResourceId $grant.ResourceId
+        $grantCreatedDateTime = Get-SafeGraphProperty -InputObject $grant -PropertyName 'CreatedDateTime' -EntityType 'AppRoleAssignment' -EntityId ([string]$grant.Id) -TrackMissing
 
         $permissionRows.Add([pscustomobject]@{
             AppDisplayName = $spDisplayName
@@ -970,7 +972,7 @@ foreach ($sp in $servicePrincipals) {
             ConsentType = 'AllPrincipals'
             GrantedToPrincipalId = $null
             GrantedToPrincipal = $null
-            GrantedDateTime = To-NullableDateTimeString -Value $grant.CreatedDateTime
+            GrantedDateTime = To-NullableDateTimeString -Value $grantCreatedDateTime
         })
     }
 
@@ -980,6 +982,7 @@ foreach ($sp in $servicePrincipals) {
 
     foreach ($assignment in $principalAssignments) {
         $appRoleName = Resolve-AppRoleValue -ResourceSp $sp -AppRoleId $assignment.AppRoleId
+        $assignmentCreatedDateTime = Get-SafeGraphProperty -InputObject $assignment -PropertyName 'CreatedDateTime' -EntityType 'AppRoleAssignedTo' -EntityId ([string]$assignment.Id) -TrackMissing
 
         if ($assignment.PrincipalType -eq 'User') {
             $directAssignedUsers++
@@ -995,7 +998,7 @@ foreach ($sp in $servicePrincipals) {
                 AssignedPrincipalId = $assignment.PrincipalId
                 AssignedUserPrincipalName = if ($user) { $user.UserPrincipalName } else { $null }
                 AssignmentAppRole = $appRoleName
-                AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignment.CreatedDateTime
+                AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignmentCreatedDateTime
                 AccountEnabled = if ($user) { $user.AccountEnabled } else { $null }
                 LastSignInDateTime = if ($user) { Get-SignInActivityDate -SignInActivity $user.SignInActivity -PropertyName 'lastSignInDateTime' } else { $null }
                 LastSuccessfulSignInDateTime = if ($user) { Get-SignInActivityDate -SignInActivity $user.SignInActivity -PropertyName 'lastSuccessfulSignInDateTime' } else { $null }
@@ -1020,7 +1023,7 @@ foreach ($sp in $servicePrincipals) {
                 AssignedPrincipalId = $assignment.PrincipalId
                 AssignedUserPrincipalName = $null
                 AssignmentAppRole = $appRoleName
-                AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignment.CreatedDateTime
+                AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignmentCreatedDateTime
                 AccountEnabled = $null
                 LastSignInDateTime = $null
                 LastSuccessfulSignInDateTime = $null
@@ -1061,7 +1064,7 @@ foreach ($sp in $servicePrincipals) {
                         AssignedPrincipalId = $expandedUser.Id
                         AssignedUserPrincipalName = $expandedUser.UserPrincipalName
                         AssignmentAppRole = $appRoleName
-                        AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignment.CreatedDateTime
+                        AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignmentCreatedDateTime
                         AccountEnabled = $expandedUser.AccountEnabled
                         LastSignInDateTime = Get-SignInActivityDate -SignInActivity $expandedUser.SignInActivity -PropertyName 'lastSignInDateTime'
                         LastSuccessfulSignInDateTime = Get-SignInActivityDate -SignInActivity $expandedUser.SignInActivity -PropertyName 'lastSuccessfulSignInDateTime'
@@ -1085,7 +1088,7 @@ foreach ($sp in $servicePrincipals) {
             AssignedPrincipalId = $assignment.PrincipalId
             AssignedUserPrincipalName = $null
             AssignmentAppRole = $appRoleName
-            AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignment.CreatedDateTime
+            AssignmentCreatedDateTime = To-NullableDateTimeString -Value $assignmentCreatedDateTime
             AccountEnabled = $null
             LastSignInDateTime = $null
             LastSuccessfulSignInDateTime = $null
