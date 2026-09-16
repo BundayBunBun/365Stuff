@@ -556,7 +556,7 @@ def main() -> int:
                 graph_url(context, "/oauth2PermissionGrants"),
                 params={
                     "$filter": f"clientId eq '{sp_id}'",
-                    "$select": "id,clientId,consentType,principalId,resourceId,scope,createdDateTime",
+                    "$select": "id,clientId,consentType,principalId,resourceId,scope",
                     "$top": "999",
                 },
             )

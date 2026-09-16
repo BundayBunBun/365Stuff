@@ -815,7 +815,7 @@ foreach ($sp in $servicePrincipals) {
     $principalAssignments = @()
 
     try {
-        $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$($sp.Id)'" -All -Property "id,clientId,consentType,principalId,resourceId,scope,createdDateTime"
+        $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$($sp.Id)'" -All -Property "id,clientId,consentType,principalId,resourceId,scope"
     }
     catch {
         Write-Warning "Could not read delegated permission grants for app '$($sp.DisplayName)': $($_.Exception.Message)"
