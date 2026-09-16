@@ -96,9 +96,12 @@ chmod +x ./install-and-run-linux.sh
 What the Linux script does:
 
 - Installs PowerShell (Ubuntu/Debian or RHEL-family)
+- Supports common Ubuntu derivatives (Mint/Pop/KDE Neon/Zorin)
 - Installs/updates the `Microsoft.Graph` PowerShell module
 - Runs the read-only inventory script
 - Uses device code auth by default (best for SSH/headless sessions)
+
+If a distro repo does not provide `powershell`, the installer automatically tries `powershell-lts`.
 
 Optional Linux flags:
 

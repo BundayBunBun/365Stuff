@@ -72,6 +72,16 @@ have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+first_working_url() {
+  for url in "$@"; do
+    if curl -fsSI "$url" >/dev/null 2>&1; then
+      echo "$url"
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_powershell_if_missing() {
   if have_cmd pwsh; then
     echo "PowerShell already installed: $(pwsh --version)"
@@ -99,12 +109,86 @@ install_powershell_if_missing() {
   case "${ID:-}" in
     ubuntu|debian)
       $SUDO apt-get update
-      $SUDO apt-get install -y wget apt-transport-https software-properties-common gnupg
-      wget -q https://packages.microsoft.com/config/${ID}/${VERSION_ID}/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
+      $SUDO apt-get install -y curl wget apt-transport-https software-properties-common gnupg ca-certificates
+
+      ver="${VERSION_ID//\"/}"
+      major="${ver%%.*}"
+      base_id="${ID:-ubuntu}"
+
+      repo_candidates=(
+        "https://packages.microsoft.com/config/${base_id}/${ver}/packages-microsoft-prod.deb"
+      )
+
+      if [[ "$base_id" == "ubuntu" ]]; then
+        repo_candidates+=(
+          "https://packages.microsoft.com/config/ubuntu/${major}.04/packages-microsoft-prod.deb"
+          "https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb"
+          "https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb"
+          "https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb"
+        )
+      else
+        repo_candidates+=(
+          "https://packages.microsoft.com/config/debian/${major}/packages-microsoft-prod.deb"
+          "https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb"
+          "https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb"
+        )
+      fi
+
+      repo_url="$(first_working_url "${repo_candidates[@]}")" || {
+        echo "Could not locate a compatible Microsoft package repo bootstrap for ${base_id} ${ver}." >&2
+        echo "Install guide: https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux" >&2
+        exit 1
+      }
+
+      echo "Using Microsoft repo bootstrap: ${repo_url}"
+      wget -q "$repo_url" -O /tmp/packages-microsoft-prod.deb
       $SUDO dpkg -i /tmp/packages-microsoft-prod.deb
       rm -f /tmp/packages-microsoft-prod.deb
+
       $SUDO apt-get update
-      $SUDO apt-get install -y powershell
+
+      if apt-cache show powershell >/dev/null 2>&1; then
+        $SUDO apt-get install -y powershell
+      elif apt-cache show powershell-lts >/dev/null 2>&1; then
+        echo "Package 'powershell' not found, installing 'powershell-lts' instead."
+        $SUDO apt-get install -y powershell-lts
+      else
+        echo "Neither 'powershell' nor 'powershell-lts' were found after configuring the Microsoft repo." >&2
+        echo "Install guide: https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux" >&2
+        exit 1
+      fi
+      ;;
+    linuxmint|pop|neon|zorin)
+      $SUDO apt-get update
+      $SUDO apt-get install -y curl wget apt-transport-https software-properties-common gnupg ca-certificates
+
+      ver="${VERSION_ID//\"/}"
+      repo_url="$(first_working_url \
+        "https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb" \
+        "https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb" \
+        "https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb")" || {
+        echo "Could not locate a compatible Ubuntu-based Microsoft package repo bootstrap for ${ID} ${ver}." >&2
+        echo "Install guide: https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux" >&2
+        exit 1
+      }
+
+      echo "Using Microsoft repo bootstrap: ${repo_url}"
+      wget -q "$repo_url" -O /tmp/packages-microsoft-prod.deb
+      $SUDO dpkg -i /tmp/packages-microsoft-prod.deb
+      rm -f /tmp/packages-microsoft-prod.deb
+
+      $SUDO apt-get update
+
+      if apt-cache show powershell >/dev/null 2>&1; then
+        $SUDO apt-get install -y powershell
+      elif apt-cache show powershell-lts >/dev/null 2>&1; then
+        echo "Package 'powershell' not found, installing 'powershell-lts' instead."
+        $SUDO apt-get install -y powershell-lts
+      else
+        echo "Neither 'powershell' nor 'powershell-lts' were found after configuring the Microsoft repo." >&2
+        echo "Install guide: https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux" >&2
+        exit 1
+      fi
       ;;
     rhel|centos|rocky|almalinux|fedora)
       if have_cmd dnf; then
