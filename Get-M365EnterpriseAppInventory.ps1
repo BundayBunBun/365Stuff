@@ -757,8 +757,29 @@ if ($null -eq $context) {
     throw 'No active Microsoft Graph context found after Connect-MgGraph.'
 }
 
+$profileName = $null
+if ($context.PSObject.Properties.Name -contains 'ProfileName') {
+    $profileName = $context.ProfileName
+}
+
+if ([string]::IsNullOrWhiteSpace($profileName)) {
+    try {
+        $mgProfile = Get-MgProfile
+        if ($mgProfile -and ($mgProfile.PSObject.Properties.Name -contains 'Name')) {
+            $profileName = $mgProfile.Name
+        }
+    }
+    catch {
+        $profileName = $null
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($profileName)) {
+    $profileName = if ($UseBetaProfile) { 'beta' } else { 'v1.0' }
+}
+
 Write-Host "Connected to tenant: $($context.TenantId)" -ForegroundColor Cyan
-Write-Host "Using profile: $($context.ProfileName)" -ForegroundColor Cyan
+Write-Host "Using profile: $profileName" -ForegroundColor Cyan
 Write-Host "Scopes: $($context.Scopes -join ', ')" -ForegroundColor Cyan
 
 $lookbackStart = [DateTimeOffset]::UtcNow.AddDays(-1 * [Math]::Abs($SignInLookbackDays))
@@ -1053,7 +1074,7 @@ New-EnterpriseAppHtmlReport `
 [pscustomobject]@{
     GeneratedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     TenantId = $context.TenantId
-    Profile = $context.ProfileName
+    Profile = $profileName
     LookbackDays = [Math]::Abs($SignInLookbackDays)
     IncludeDisabledServicePrincipals = [bool]$IncludeDisabledServicePrincipals
     GroupMemberExpansionEnabled = [bool](-not $SkipGroupMemberExpansion)
