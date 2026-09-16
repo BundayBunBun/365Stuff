@@ -63,6 +63,69 @@ function To-NullableDateTimeString {
     }
 }
 
+function Add-MissingGraphProperty {
+    param(
+        [string]$EntityType,
+        [string]$PropertyName,
+        [string]$EntityId
+    )
+
+    $safeEntityType = if ([string]::IsNullOrWhiteSpace($EntityType)) { 'UnknownEntity' } else { $EntityType }
+    $safePropertyName = if ([string]::IsNullOrWhiteSpace($PropertyName)) { 'UnknownProperty' } else { $PropertyName }
+    $key = "$safeEntityType|$safePropertyName"
+
+    if (-not $script:missingGraphPropertyCounts.ContainsKey($key)) {
+        $script:missingGraphPropertyCounts[$key] = [pscustomobject]@{
+            EntityType = $safeEntityType
+            PropertyName = $safePropertyName
+            MissingCount = 0
+            SampleEntityIds = [System.Collections.Generic.List[string]]::new()
+        }
+    }
+
+    $entry = $script:missingGraphPropertyCounts[$key]
+    $entry.MissingCount++
+
+    if (-not [string]::IsNullOrWhiteSpace($EntityId) -and $entry.SampleEntityIds.Count -lt 5 -and -not $entry.SampleEntityIds.Contains($EntityId)) {
+        $entry.SampleEntityIds.Add($EntityId)
+    }
+}
+
+function Get-SafeGraphProperty {
+    param(
+        [object]$InputObject,
+        [string]$PropertyName,
+        [string]$EntityType,
+        [string]$EntityId,
+        [object]$DefaultValue = $null,
+        [switch]$TrackMissing
+    )
+
+    if ($null -eq $InputObject) {
+        if ($TrackMissing) {
+            Add-MissingGraphProperty -EntityType $EntityType -PropertyName $PropertyName -EntityId $EntityId
+        }
+        return $DefaultValue
+    }
+
+    if ($InputObject.PSObject.Properties.Name -contains $PropertyName) {
+        return $InputObject.$PropertyName
+    }
+
+    if ($InputObject.PSObject.Properties.Name -contains 'AdditionalProperties') {
+        $additional = $InputObject.AdditionalProperties
+        if ($additional -and $additional.ContainsKey($PropertyName)) {
+            return $additional[$PropertyName]
+        }
+    }
+
+    if ($TrackMissing) {
+        Add-MissingGraphProperty -EntityType $EntityType -PropertyName $PropertyName -EntityId $EntityId
+    }
+
+    return $DefaultValue
+}
+
 function Get-SignInActivityDate {
     param(
         [object]$SignInActivity,
@@ -798,6 +861,7 @@ else {
 $script:userCache = @{}
 $script:groupCache = @{}
 $script:resourceSpCache = @{}
+$script:missingGraphPropertyCounts = @{}
 
 $appRows = [System.Collections.Generic.List[object]]::new()
 $permissionRows = [System.Collections.Generic.List[object]]::new()
@@ -810,29 +874,37 @@ foreach ($sp in $servicePrincipals) {
     $index++
     Write-Progress -Activity 'Processing Enterprise Applications' -Status "$index / $total" -PercentComplete (($index / [Math]::Max($total, 1)) * 100)
 
+    $spId = [string](Get-SafeGraphProperty -InputObject $sp -PropertyName 'Id' -EntityType 'ServicePrincipal' -EntityId '' -TrackMissing)
+    $spAppId = [string](Get-SafeGraphProperty -InputObject $sp -PropertyName 'AppId' -EntityType 'ServicePrincipal' -EntityId $spId -TrackMissing)
+    $spDisplayName = [string](Get-SafeGraphProperty -InputObject $sp -PropertyName 'DisplayName' -EntityType 'ServicePrincipal' -EntityId $spId -DefaultValue '<Unknown App>' -TrackMissing)
+    $spCreatedDateTime = Get-SafeGraphProperty -InputObject $sp -PropertyName 'CreatedDateTime' -EntityType 'ServicePrincipal' -EntityId $spId -TrackMissing
+    $spAccountEnabled = Get-SafeGraphProperty -InputObject $sp -PropertyName 'AccountEnabled' -EntityType 'ServicePrincipal' -EntityId $spId -TrackMissing
+    $spPublisherName = Get-SafeGraphProperty -InputObject $sp -PropertyName 'PublisherName' -EntityType 'ServicePrincipal' -EntityId $spId -TrackMissing
+    $spServicePrincipalType = Get-SafeGraphProperty -InputObject $sp -PropertyName 'ServicePrincipalType' -EntityType 'ServicePrincipal' -EntityId $spId -TrackMissing
+
     $delegatedGrants = @()
     $applicationGrants = @()
     $principalAssignments = @()
 
     try {
-        $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$($sp.Id)'" -All -Property "id,clientId,consentType,principalId,resourceId,scope"
+        $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$spId'" -All -Property "id,clientId,consentType,principalId,resourceId,scope"
     }
     catch {
-        Write-Warning "Could not read delegated permission grants for app '$($sp.DisplayName)': $($_.Exception.Message)"
+        Write-Warning "Could not read delegated permission grants for app '$spDisplayName': $($_.Exception.Message)"
     }
 
     try {
-        $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id -All -Property "id,appRoleId,resourceId,createdDateTime"
+        $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $spId -All -Property "id,appRoleId,resourceId,createdDateTime"
     }
     catch {
-        Write-Warning "Could not read application permission grants for app '$($sp.DisplayName)': $($_.Exception.Message)"
+        Write-Warning "Could not read application permission grants for app '$spDisplayName': $($_.Exception.Message)"
     }
 
     try {
-        $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $sp.Id -All -Property "id,appRoleId,principalId,principalDisplayName,principalType,createdDateTime"
+        $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $spId -All -Property "id,appRoleId,principalId,principalDisplayName,principalType,createdDateTime"
     }
     catch {
-        Write-Warning "Could not read principal assignments for app '$($sp.DisplayName)': $($_.Exception.Message)"
+        Write-Warning "Could not read principal assignments for app '$spDisplayName': $($_.Exception.Message)"
     }
 
     foreach ($grant in $delegatedGrants) {
@@ -841,9 +913,9 @@ foreach ($sp in $servicePrincipals) {
 
         if ($scopes.Count -eq 0) {
             $permissionRows.Add([pscustomobject]@{
-                AppDisplayName = $sp.DisplayName
-                AppObjectId = $sp.Id
-                AppId = $sp.AppId
+                AppDisplayName = $spDisplayName
+                AppObjectId = $spId
+                AppId = $spAppId
                 PermissionType = 'Delegated'
                 PermissionValue = $null
                 PermissionDisplayName = $null
@@ -867,9 +939,9 @@ foreach ($sp in $servicePrincipals) {
             }
 
             $permissionRows.Add([pscustomobject]@{
-                AppDisplayName = $sp.DisplayName
-                AppObjectId = $sp.Id
-                AppId = $sp.AppId
+                AppDisplayName = $spDisplayName
+                AppObjectId = $spId
+                AppId = $spAppId
                 PermissionType = 'Delegated'
                 PermissionValue = $scope
                 PermissionDisplayName = Resolve-DelegatedPermissionDisplay -ResourceSp $resourceSp -ScopeValue $scope
@@ -887,9 +959,9 @@ foreach ($sp in $servicePrincipals) {
         $resourceSp = Get-ResourceSpFromCache -ResourceId $grant.ResourceId
 
         $permissionRows.Add([pscustomobject]@{
-            AppDisplayName = $sp.DisplayName
-            AppObjectId = $sp.Id
-            AppId = $sp.AppId
+            AppDisplayName = $spDisplayName
+            AppObjectId = $spId
+            AppId = $spAppId
             PermissionType = 'Application'
             PermissionValue = Resolve-AppRoleValue -ResourceSp $resourceSp -AppRoleId $grant.AppRoleId
             PermissionDisplayName = Resolve-AppRoleValue -ResourceSp $resourceSp -AppRoleId $grant.AppRoleId
@@ -914,9 +986,9 @@ foreach ($sp in $servicePrincipals) {
             $user = Get-UserFromCache -UserId $assignment.PrincipalId
 
             $assignmentRows.Add([pscustomobject]@{
-                AppDisplayName = $sp.DisplayName
-                AppObjectId = $sp.Id
-                AppId = $sp.AppId
+                AppDisplayName = $spDisplayName
+                AppObjectId = $spId
+                AppId = $spAppId
                 AssignmentSource = 'Direct'
                 AssignedPrincipalType = 'User'
                 AssignedPrincipalDisplayName = if ($user) { $user.DisplayName } else { $assignment.PrincipalDisplayName }
@@ -939,9 +1011,9 @@ foreach ($sp in $servicePrincipals) {
             $group = Get-GroupFromCache -GroupId $assignment.PrincipalId
 
             $assignmentRows.Add([pscustomobject]@{
-                AppDisplayName = $sp.DisplayName
-                AppObjectId = $sp.Id
-                AppId = $sp.AppId
+                AppDisplayName = $spDisplayName
+                AppObjectId = $spId
+                AppId = $spAppId
                 AssignmentSource = 'Direct'
                 AssignedPrincipalType = 'Group'
                 AssignedPrincipalDisplayName = if ($group) { $group.DisplayName } else { $assignment.PrincipalDisplayName }
@@ -963,7 +1035,7 @@ foreach ($sp in $servicePrincipals) {
                 }
                 catch {
                     $members = @()
-                    Write-Warning "Could not expand members for group '$($assignment.PrincipalDisplayName)' in app '$($sp.DisplayName)': $($_.Exception.Message)"
+                    Write-Warning "Could not expand members for group '$($assignment.PrincipalDisplayName)' in app '$spDisplayName': $($_.Exception.Message)"
                 }
 
                 foreach ($member in $members) {
@@ -980,9 +1052,9 @@ foreach ($sp in $servicePrincipals) {
                     $expandedGroupMembers++
 
                     $assignmentRows.Add([pscustomobject]@{
-                        AppDisplayName = $sp.DisplayName
-                        AppObjectId = $sp.Id
-                        AppId = $sp.AppId
+                        AppDisplayName = $spDisplayName
+                        AppObjectId = $spId
+                        AppId = $spAppId
                         AssignmentSource = 'GroupMemberExpansion'
                         AssignedPrincipalType = 'User'
                         AssignedPrincipalDisplayName = $expandedUser.DisplayName
@@ -1004,9 +1076,9 @@ foreach ($sp in $servicePrincipals) {
         }
 
         $assignmentRows.Add([pscustomobject]@{
-            AppDisplayName = $sp.DisplayName
-            AppObjectId = $sp.Id
-            AppId = $sp.AppId
+            AppDisplayName = $spDisplayName
+            AppObjectId = $spId
+            AppId = $spAppId
             AssignmentSource = 'Direct'
             AssignedPrincipalType = $assignment.PrincipalType
             AssignedPrincipalDisplayName = $assignment.PrincipalDisplayName
@@ -1023,21 +1095,21 @@ foreach ($sp in $servicePrincipals) {
         })
     }
 
-    $appSignIn = Get-AppLatestSignIn -AppId $sp.AppId -LookbackStart $lookbackStart
+    $appSignIn = Get-AppLatestSignIn -AppId $spAppId -LookbackStart $lookbackStart
 
-    $appPermissionsForCurrent = $permissionRows | Where-Object { $_.AppObjectId -eq $sp.Id }
+    $appPermissionsForCurrent = $permissionRows | Where-Object { $_.AppObjectId -eq $spId }
 
     $delegatedCount = ($appPermissionsForCurrent | Where-Object { $_.PermissionType -eq 'Delegated' } | Measure-Object).Count
     $applicationCount = ($appPermissionsForCurrent | Where-Object { $_.PermissionType -eq 'Application' } | Measure-Object).Count
 
     $appRows.Add([pscustomobject]@{
-        AppDisplayName = $sp.DisplayName
-        AppObjectId = $sp.Id
-        AppId = $sp.AppId
-        PublisherName = $sp.PublisherName
-        ServicePrincipalType = $sp.ServicePrincipalType
-        ServicePrincipalCreatedDateTime = To-NullableDateTimeString -Value $sp.CreatedDateTime
-        AccountEnabled = $sp.AccountEnabled
+        AppDisplayName = $spDisplayName
+        AppObjectId = $spId
+        AppId = $spAppId
+        PublisherName = $spPublisherName
+        ServicePrincipalType = $spServicePrincipalType
+        ServicePrincipalCreatedDateTime = To-NullableDateTimeString -Value $spCreatedDateTime
+        AccountEnabled = $spAccountEnabled
         IsConsented = [bool](($delegatedCount + $applicationCount) -gt 0)
         DelegatedPermissionCount = $delegatedCount
         ApplicationPermissionCount = $applicationCount
@@ -1057,6 +1129,7 @@ $permissionsReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseApp
 $assignmentsReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppAssignments_$timestamp.csv"
 $jsonReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppInventory_$timestamp.json"
 $htmlReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppReview_$timestamp.html"
+$missingPropertiesReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppMissingProperties_$timestamp.csv"
 
 $appRows | Sort-Object AppDisplayName | Export-Csv -NoTypeInformation -Path $appReportPath -Encoding UTF8
 $permissionRows | Sort-Object AppDisplayName, PermissionType, ResourceDisplayName, PermissionValue | Export-Csv -NoTypeInformation -Path $permissionsReportPath -Encoding UTF8
@@ -1071,6 +1144,21 @@ New-EnterpriseAppHtmlReport `
     -GeneratedAtUtc ((Get-Date).ToUniversalTime().ToString('o')) `
     -LookbackDays ([Math]::Abs($SignInLookbackDays))
 
+$missingPropertyRows = @(
+    $script:missingGraphPropertyCounts.Values |
+        Sort-Object EntityType, PropertyName |
+        ForEach-Object {
+            [pscustomobject]@{
+                EntityType = $_.EntityType
+                PropertyName = $_.PropertyName
+                MissingCount = $_.MissingCount
+                SampleEntityIds = ($_.SampleEntityIds -join ';')
+            }
+        }
+)
+
+$missingPropertyRows | Export-Csv -NoTypeInformation -Path $missingPropertiesReportPath -Encoding UTF8
+
 [pscustomobject]@{
     GeneratedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     TenantId = $context.TenantId
@@ -1083,6 +1171,7 @@ New-EnterpriseAppHtmlReport `
         Permissions = $permissionsReportPath
         Assignments = $assignmentsReportPath
         Html = $htmlReportPath
+        MissingProperties = $missingPropertiesReportPath
     }
     AppCount = ($appRows | Measure-Object).Count
     PermissionRowCount = ($permissionRows | Measure-Object).Count
@@ -1094,5 +1183,14 @@ Write-Host "Apps:        $appReportPath"
 Write-Host "Permissions: $permissionsReportPath"
 Write-Host "Assignments: $assignmentsReportPath"
 Write-Host "HTML:        $htmlReportPath"
+Write-Host "Missing:     $missingPropertiesReportPath"
 Write-Host "Summary:     $jsonReportPath"
+
+if (($missingPropertyRows | Measure-Object).Count -gt 0) {
+    Write-Host "\nMissing properties encountered (non-fatal):" -ForegroundColor Yellow
+    $missingPropertyRows | Sort-Object MissingCount -Descending | Select-Object -First 15 | Format-Table -AutoSize | Out-String | Write-Host
+}
+else {
+    Write-Host "\nNo missing Graph properties were encountered." -ForegroundColor Green
+}
 Write-Host "\nThis script is read-only: it only uses GET/list operations against Microsoft Graph." -ForegroundColor Yellow

@@ -151,6 +151,7 @@ The script writes timestamped reports:
 - `EnterpriseAppAssignments_yyyyMMdd_HHmmss.csv`
 - `EnterpriseAppReview_yyyyMMdd_HHmmss.html`
 - `EnterpriseAppInventory_yyyyMMdd_HHmmss.json`
+- `EnterpriseAppMissingProperties_yyyyMMdd_HHmmss.csv`
 
 ## Client-facing HTML report
 
@@ -167,3 +168,4 @@ The script writes timestamped reports:
 - User sign-in fields may require additional directory roles in your tenant even when scopes are granted.
 - App activity is determined from sign-in logs in the specified lookback window.
 - Linux prerequisite install support is included for Ubuntu/Debian and RHEL-family distributions.
+- Missing/unsupported Graph properties are handled non-fatally and summarized in the `EnterpriseAppMissingProperties_*.csv` report.
