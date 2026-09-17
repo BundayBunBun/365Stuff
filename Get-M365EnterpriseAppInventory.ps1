@@ -341,6 +341,52 @@ function Get-AppLatestSignIn {
     }
 }
 
+function Get-AppSignInActivityMap {
+    param([DateTimeOffset]$LookbackStart)
+
+    $map = @{}
+    $isoLookback = $LookbackStart.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $uri = "/auditLogs/signIns?`$filter=createdDateTime ge $isoLookback&`$select=appId,createdDateTime&`$orderby=createdDateTime desc&`$top=1000"
+
+    try {
+        while (-not [string]::IsNullOrWhiteSpace($uri)) {
+            $response = Invoke-MgGraphRequest -Method GET -Uri $uri
+            $items = @($response.value)
+
+            foreach ($entry in $items) {
+                $appId = $entry.appId
+                if ([string]::IsNullOrWhiteSpace($appId)) {
+                    continue
+                }
+
+                if (-not $map.ContainsKey($appId)) {
+                    $map[$appId] = To-NullableDateTimeString -Value $entry.createdDateTime
+                }
+            }
+
+            if ($response.PSObject.Properties.Name -contains '@odata.nextLink') {
+                $uri = $response.'@odata.nextLink'
+            }
+            else {
+                $uri = $null
+            }
+        }
+
+        return [pscustomobject]@{
+            Success = $true
+            Error = $null
+            Map = $map
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Success = $false
+            Error = $_.Exception.Message
+            Map = @{}
+        }
+    }
+}
+
 function ConvertTo-SafeJsonForHtmlScript {
         param([object]$Value)
 
@@ -938,6 +984,11 @@ Write-Host "Scopes: $($context.Scopes -join ', ')" -ForegroundColor Cyan
 $lookbackStart = [DateTimeOffset]::UtcNow.AddDays(-1 * [Math]::Abs($SignInLookbackDays))
 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
+$appSignInPrefetch = Get-AppSignInActivityMap -LookbackStart $lookbackStart
+if (-not $appSignInPrefetch.Success) {
+    Write-Warning "Could not prefetch app sign-in activity once for all apps. App activity fields will be blank. Error: $($appSignInPrefetch.Error)"
+}
+
 $spProperties = "id,appId,displayName,createdDateTime,accountEnabled,publisherName,servicePrincipalType,appOwnerOrganizationId,appRoles"
 $allServicePrincipals = Get-MgServicePrincipal -All -Property $spProperties
 
@@ -1188,7 +1239,28 @@ foreach ($sp in $servicePrincipals) {
         })
     }
 
-    $appSignIn = Get-AppLatestSignIn -AppId $spAppId -LookbackStart $lookbackStart
+    $appSignIn = [pscustomobject]@{
+        HasActivityInWindow = $false
+        LastActivityDateTime = $null
+        Error = $null
+    }
+
+    if ($appSignInPrefetch.Success) {
+        if (-not [string]::IsNullOrWhiteSpace($spAppId) -and $appSignInPrefetch.Map.ContainsKey($spAppId)) {
+            $appSignIn = [pscustomobject]@{
+                HasActivityInWindow = $true
+                LastActivityDateTime = $appSignInPrefetch.Map[$spAppId]
+                Error = $null
+            }
+        }
+    }
+    else {
+        $appSignIn = [pscustomobject]@{
+            HasActivityInWindow = $false
+            LastActivityDateTime = $null
+            Error = $appSignInPrefetch.Error
+        }
+    }
 
     $appPermissionsForCurrent = $permissionRows | Where-Object { $_.AppObjectId -eq $spId }
 
