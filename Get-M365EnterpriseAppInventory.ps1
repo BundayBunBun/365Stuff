@@ -129,6 +129,55 @@ function Get-SafeGraphProperty {
     return $DefaultValue
 }
 
+function Test-IsAuthChallengeMessage {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    $m = $Message.ToLowerInvariant()
+    return (
+        $m.Contains('interaction_required') -or
+        $m.Contains('authentication') -or
+        $m.Contains('claims challenge') -or
+        $m.Contains('conditional access') -or
+        $m.Contains('reauth') -or
+        $m.Contains('aadsts') -or
+        $m.Contains('mfa')
+    )
+}
+
+function Write-OnceWarning {
+    param(
+        [string]$Key,
+        [string]$Message
+    )
+
+    if (-not $script:warningIssued.ContainsKey($Key)) {
+        Write-Warning $Message
+        $script:warningIssued[$Key] = $true
+    }
+}
+
+function Add-SkippedLookup {
+    param(
+        [string]$LookupName,
+        [string]$Reason
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LookupName)) {
+        return
+    }
+
+    if (-not $script:skippedLookups.ContainsKey($LookupName)) {
+        $script:skippedLookups[$LookupName] = [pscustomobject]@{
+            LookupName = $LookupName
+            Reason = $Reason
+        }
+    }
+}
+
 function Get-SignInActivityDate {
     param(
         [object]$SignInActivity,
@@ -234,11 +283,44 @@ function Get-UserFromCache {
         return $script:userCache[$UserId]
     }
 
+    if ($script:disableUserLookup) {
+        $script:userCache[$UserId] = $null
+        return $null
+    }
+
+    $userPropertySet = 'id,displayName,userPrincipalName,accountEnabled'
+    if ($script:includeUserSignInActivity) {
+        $userPropertySet = "$userPropertySet,signInActivity"
+    }
+
     try {
-        $user = Get-MgUser -UserId $UserId -Property "id,displayName,userPrincipalName,accountEnabled,signInActivity"
+        $user = Get-MgUser -UserId $UserId -Property $userPropertySet
     }
     catch {
-        $user = $null
+        $message = $_.Exception.Message
+
+        if ($script:includeUserSignInActivity -and (Test-IsAuthChallengeMessage -Message $message)) {
+            $script:includeUserSignInActivity = $false
+            Add-SkippedLookup -LookupName 'UserSignInActivity' -Reason 'Auth challenge while reading signInActivity. User activity fields set to Unknown.'
+            Write-OnceWarning -Key 'UserSignInActivityDisabled' -Message 'Auth challenge encountered reading user signInActivity. Disabling signInActivity lookups for this run.'
+
+            try {
+                $user = Get-MgUser -UserId $UserId -Property 'id,displayName,userPrincipalName,accountEnabled'
+            }
+            catch {
+                $message = $_.Exception.Message
+                $user = $null
+            }
+        }
+        else {
+            $user = $null
+        }
+
+        if ($null -eq $user -and (Test-IsAuthChallengeMessage -Message $message)) {
+            $script:disableUserLookup = $true
+            Add-SkippedLookup -LookupName 'UserLookup' -Reason 'Auth challenge while reading user objects. Assigned user details may be incomplete.'
+            Write-OnceWarning -Key 'UserLookupDisabled' -Message 'Auth challenge encountered reading users. Disabling user lookups for this run.'
+        }
     }
 
     $script:userCache[$UserId] = $user
@@ -1003,6 +1085,14 @@ $script:userCache = @{}
 $script:groupCache = @{}
 $script:resourceSpCache = @{}
 $script:missingGraphPropertyCounts = @{}
+$script:warningIssued = @{}
+$script:skippedLookups = @{}
+$script:includeUserSignInActivity = $true
+$script:disableUserLookup = $false
+$script:disableDelegatedGrantLookup = $false
+$script:disableApplicationGrantLookup = $false
+$script:disablePrincipalAssignmentLookup = $false
+$script:disableGroupExpansionLookup = $false
 
 $appRows = [System.Collections.Generic.List[object]]::new()
 $permissionRows = [System.Collections.Generic.List[object]]::new()
@@ -1027,25 +1117,55 @@ foreach ($sp in $servicePrincipals) {
     $applicationGrants = @()
     $principalAssignments = @()
 
-    try {
-        $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$spId'" -All -Property "id,clientId,consentType,principalId,resourceId,scope"
-    }
-    catch {
-        Write-Warning "Could not read delegated permission grants for app '$spDisplayName': $($_.Exception.Message)"
+    if (-not $script:disableDelegatedGrantLookup) {
+        try {
+            $delegatedGrants = Get-MgOauth2PermissionGrant -Filter "clientId eq '$spId'" -All -Property "id,clientId,consentType,principalId,resourceId,scope"
+        }
+        catch {
+            $message = $_.Exception.Message
+            if (Test-IsAuthChallengeMessage -Message $message) {
+                $script:disableDelegatedGrantLookup = $true
+                Add-SkippedLookup -LookupName 'DelegatedPermissionGrants' -Reason 'Auth challenge while reading oauth2PermissionGrants. Delegated permission details may be incomplete.'
+                Write-OnceWarning -Key 'DelegatedPermissionGrantsDisabled' -Message 'Auth challenge encountered for delegated grants. Skipping delegated-grant lookups for remaining apps.'
+            }
+            else {
+                Write-Warning "Could not read delegated permission grants for app '$spDisplayName': $message"
+            }
+        }
     }
 
-    try {
-        $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $spId -All -Property "id,appRoleId,resourceId"
-    }
-    catch {
-        Write-Warning "Could not read application permission grants for app '$spDisplayName': $($_.Exception.Message)"
+    if (-not $script:disableApplicationGrantLookup) {
+        try {
+            $applicationGrants = Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $spId -All -Property "id,appRoleId,resourceId"
+        }
+        catch {
+            $message = $_.Exception.Message
+            if (Test-IsAuthChallengeMessage -Message $message) {
+                $script:disableApplicationGrantLookup = $true
+                Add-SkippedLookup -LookupName 'ApplicationPermissionGrants' -Reason 'Auth challenge while reading service principal appRoleAssignments. Application permission details may be incomplete.'
+                Write-OnceWarning -Key 'ApplicationPermissionGrantsDisabled' -Message 'Auth challenge encountered for application grants. Skipping application-grant lookups for remaining apps.'
+            }
+            else {
+                Write-Warning "Could not read application permission grants for app '$spDisplayName': $message"
+            }
+        }
     }
 
-    try {
-        $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $spId -All -Property "id,appRoleId,principalId,principalDisplayName,principalType"
-    }
-    catch {
-        Write-Warning "Could not read principal assignments for app '$spDisplayName': $($_.Exception.Message)"
+    if (-not $script:disablePrincipalAssignmentLookup) {
+        try {
+            $principalAssignments = Get-MgServicePrincipalAppRoleAssignedTo -ServicePrincipalId $spId -All -Property "id,appRoleId,principalId,principalDisplayName,principalType"
+        }
+        catch {
+            $message = $_.Exception.Message
+            if (Test-IsAuthChallengeMessage -Message $message) {
+                $script:disablePrincipalAssignmentLookup = $true
+                Add-SkippedLookup -LookupName 'PrincipalAssignments' -Reason 'Auth challenge while reading service principal assignments. User/group assignment details may be incomplete.'
+                Write-OnceWarning -Key 'PrincipalAssignmentsDisabled' -Message 'Auth challenge encountered for principal assignments. Skipping assignment lookups for remaining apps.'
+            }
+            else {
+                Write-Warning "Could not read principal assignments for app '$spDisplayName': $message"
+            }
+        }
     }
 
     foreach ($grant in $delegatedGrants) {
@@ -1173,13 +1293,21 @@ foreach ($sp in $servicePrincipals) {
                 ViaGroupDisplayName = $null
             })
 
-            if (-not $SkipGroupMemberExpansion) {
+            if (-not $SkipGroupMemberExpansion -and -not $script:disableGroupExpansionLookup) {
                 try {
                     $members = Get-MgGroupTransitiveMember -GroupId $assignment.PrincipalId -All -Property "id"
                 }
                 catch {
                     $members = @()
-                    Write-Warning "Could not expand members for group '$($assignment.PrincipalDisplayName)' in app '$spDisplayName': $($_.Exception.Message)"
+                    $message = $_.Exception.Message
+                    if (Test-IsAuthChallengeMessage -Message $message) {
+                        $script:disableGroupExpansionLookup = $true
+                        Add-SkippedLookup -LookupName 'GroupMemberExpansion' -Reason 'Auth challenge while expanding group members. Indirect user assignment details may be incomplete.'
+                        Write-OnceWarning -Key 'GroupMemberExpansionDisabled' -Message 'Auth challenge encountered for group member expansion. Skipping group expansion for remaining apps.'
+                    }
+                    else {
+                        Write-Warning "Could not expand members for group '$($assignment.PrincipalDisplayName)' in app '$spDisplayName': $message"
+                    }
                 }
 
                 foreach ($member in $members) {
@@ -1295,6 +1423,7 @@ $assignmentsReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseApp
 $jsonReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppInventory_$timestamp.json"
 $htmlReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppReview_$timestamp.html"
 $missingPropertiesReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppMissingProperties_$timestamp.csv"
+$skippedLookupsReportPath = Join-Path -Path $OutputFolder -ChildPath "EnterpriseAppSkippedLookups_$timestamp.csv"
 
 $consentedAppRows = @($appRows | Where-Object { $_.IsConsented })
 $consentedAppIdSet = [System.Collections.Generic.HashSet[string]]::new()
@@ -1367,6 +1496,19 @@ $missingPropertyRows = @(
 
 $missingPropertyRows | Export-Csv -NoTypeInformation -Path $missingPropertiesReportPath -Encoding UTF8
 
+$skippedLookupRows = @(
+    $script:skippedLookups.Values |
+        Sort-Object LookupName |
+        ForEach-Object {
+            [pscustomobject]@{
+                LookupName = $_.LookupName
+                Reason = $_.Reason
+            }
+        }
+)
+
+$skippedLookupRows | Export-Csv -NoTypeInformation -Path $skippedLookupsReportPath -Encoding UTF8
+
 [pscustomobject]@{
     GeneratedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     TenantId = $context.TenantId
@@ -1380,6 +1522,7 @@ $missingPropertyRows | Export-Csv -NoTypeInformation -Path $missingPropertiesRep
         Assignments = $assignmentsReportPath
         Html = $htmlReportPath
         MissingProperties = $missingPropertiesReportPath
+        SkippedLookups = $skippedLookupsReportPath
     }
     AppCount = ($consentedAppRows | Measure-Object).Count
     PermissionRowCount = ($consentedPermissionRows | Measure-Object).Count
@@ -1393,6 +1536,7 @@ Write-Host "Permissions: $permissionsReportPath"
 Write-Host "Assignments: $assignmentsReportPath"
 Write-Host "HTML:        $htmlReportPath"
 Write-Host "Missing:     $missingPropertiesReportPath"
+Write-Host "Skipped:     $skippedLookupsReportPath"
 Write-Host "Summary:     $jsonReportPath"
 
 if (($missingPropertyRows | Measure-Object).Count -gt 0) {
@@ -1401,5 +1545,13 @@ if (($missingPropertyRows | Measure-Object).Count -gt 0) {
 }
 else {
     Write-Host "\nNo missing Graph properties were encountered." -ForegroundColor Green
+}
+
+if (($skippedLookupRows | Measure-Object).Count -gt 0) {
+    Write-Host "\nLookups skipped due to auth challenges (non-fatal):" -ForegroundColor Yellow
+    $skippedLookupRows | Format-Table -AutoSize | Out-String | Write-Host
+}
+else {
+    Write-Host "\nNo lookup categories were skipped for auth challenge reasons." -ForegroundColor Green
 }
 Write-Host "\nThis script is read-only: it only uses GET/list operations against Microsoft Graph." -ForegroundColor Yellow
