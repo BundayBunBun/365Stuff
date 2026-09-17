@@ -58,6 +58,12 @@ Basic run:
 .\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output
 ```
 
+Authentication behavior:
+
+- Default is browser auth.
+- Device code is optional with `-UseDeviceCode`.
+- The script reuses an existing Graph session if it already has all required scopes.
+
 Use device code authentication (recommended for Linux/headless environments):
 
 ```powershell

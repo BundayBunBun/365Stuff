@@ -16,7 +16,10 @@ param(
     [switch]$IncludeDisabledServicePrincipals,
 
     [Parameter(Mandatory = $false)]
-    [switch]$UseDeviceCode
+    [switch]$UseDeviceCode,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$UseBrowserAuth
 )
 
 Set-StrictMode -Version Latest
@@ -872,11 +875,30 @@ if (-not (Test-Path -Path $OutputFolder)) {
     New-Item -Path $OutputFolder -ItemType Directory | Out-Null
 }
 
-if ($UseDeviceCode) {
-    Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -NoWelcome
+if ($UseDeviceCode -and $UseBrowserAuth) {
+    throw 'Use either -UseDeviceCode or -UseBrowserAuth, not both.'
 }
-else {
-    Connect-MgGraph -Scopes $requiredScopes -NoWelcome
+
+$existingContext = Get-MgContext
+$canReuseContext = $false
+
+if ($existingContext -and $existingContext.Scopes) {
+    $existingScopesLower = @($existingContext.Scopes | ForEach-Object { $_.ToLowerInvariant() })
+    $missingScopes = @($requiredScopes | Where-Object { $existingScopesLower -notcontains $_.ToLowerInvariant() })
+    if ($missingScopes.Count -eq 0) {
+        $canReuseContext = $true
+        Write-Host 'Reusing existing Microsoft Graph session.' -ForegroundColor Cyan
+    }
+}
+
+if (-not $canReuseContext) {
+    if ($UseDeviceCode) {
+        Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -ContextScope CurrentUser -NoWelcome
+    }
+    else {
+        # Browser auth is the default flow in environments where device code is blocked.
+        Connect-MgGraph -Scopes $requiredScopes -ContextScope CurrentUser -NoWelcome
+    }
 }
 
 if ($UseBetaProfile) {
