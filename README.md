@@ -82,6 +82,12 @@ Skip expansion of users inside assigned groups (faster for very large tenants):
 .\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -SkipGroupMemberExpansion
 ```
 
+Skip per-user lookups (reduces repeated reauth prompts in strict Conditional Access tenants):
+
+```powershell
+.\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -SkipUserLookups
+```
+
 Change activity lookback window (default 90 days):
 
 ```powershell

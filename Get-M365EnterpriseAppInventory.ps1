@@ -19,7 +19,10 @@ param(
     [switch]$UseDeviceCode,
 
     [Parameter(Mandatory = $false)]
-    [switch]$UseBrowserAuth
+    [switch]$UseBrowserAuth,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipUserLookups
 )
 
 Set-StrictMode -Version Latest
@@ -274,6 +277,11 @@ function Resolve-AppRoleValue {
 
 function Get-UserFromCache {
     param([string]$UserId)
+
+    if ($script:skipUserLookups) {
+        $script:userCache[$UserId] = $null
+        return $null
+    }
 
     if ([string]::IsNullOrWhiteSpace($UserId)) {
         return $null
@@ -1021,11 +1029,11 @@ if ($existingContext -and $existingContext.Scopes) {
 
 if (-not $canReuseContext) {
     if ($UseDeviceCode) {
-        Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -ContextScope CurrentUser -NoWelcome
+        Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -ContextScope Process -NoWelcome
     }
     else {
         # Browser auth is the default flow in environments where device code is blocked.
-        Connect-MgGraph -Scopes $requiredScopes -ContextScope CurrentUser -NoWelcome
+        Connect-MgGraph -Scopes $requiredScopes -ContextScope Process -NoWelcome
     }
 }
 
@@ -1087,12 +1095,18 @@ $script:resourceSpCache = @{}
 $script:missingGraphPropertyCounts = @{}
 $script:warningIssued = @{}
 $script:skippedLookups = @{}
+$script:skipUserLookups = [bool]$SkipUserLookups
 $script:includeUserSignInActivity = $true
 $script:disableUserLookup = $false
 $script:disableDelegatedGrantLookup = $false
 $script:disableApplicationGrantLookup = $false
 $script:disablePrincipalAssignmentLookup = $false
 $script:disableGroupExpansionLookup = $false
+
+if ($script:skipUserLookups) {
+    Add-SkippedLookup -LookupName 'UserLookup' -Reason 'Skipped by parameter -SkipUserLookups. Assigned user details come from assignment objects only.'
+    Add-SkippedLookup -LookupName 'UserSignInActivity' -Reason 'Skipped by parameter -SkipUserLookups. User activity fields set to Unknown.'
+}
 
 $appRows = [System.Collections.Generic.List[object]]::new()
 $permissionRows = [System.Collections.Generic.List[object]]::new()
