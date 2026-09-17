@@ -523,7 +523,7 @@ function New-EnterpriseAppHtmlReport {
         table {
             border-collapse: collapse;
             width: 100%;
-            min-width: 980px;
+            min-width: 1300px;
             font-size: 0.9rem;
         }
 
@@ -569,6 +569,28 @@ function New-EnterpriseAppHtmlReport {
         }
 
         .small { font-size: 0.82rem; color: var(--muted); }
+
+        .listbox {
+            margin-top: 8px;
+            max-height: 120px;
+            overflow: auto;
+            border: 1px solid #ece8de;
+            border-radius: 8px;
+            padding: 6px;
+            background: #fcfcfb;
+        }
+
+        .listitem {
+            font-size: 0.8rem;
+            color: #3f4957;
+            line-height: 1.35;
+            padding: 2px 0;
+            border-bottom: 1px dashed #eee7da;
+        }
+
+        .listitem:last-child {
+            border-bottom: none;
+        }
 
         @keyframes rise {
             from { opacity: 0; transform: translateY(9px); }
@@ -639,16 +661,28 @@ function New-EnterpriseAppHtmlReport {
         const activityFilterEl = document.getElementById('activityFilter');
 
         const appPermissionCounts = new Map();
+        const appPermissionDetails = new Map();
         const appAssignmentUserStats = new Map();
+        const appAssignedUsers = new Map();
 
         for (const p of permissions) {
             const key = p.AppObjectId || '';
             if (!appPermissionCounts.has(key)) {
                 appPermissionCounts.set(key, { delegated: 0, application: 0 });
             }
+
+            if (!appPermissionDetails.has(key)) {
+                appPermissionDetails.set(key, new Set());
+            }
+
             const bucket = appPermissionCounts.get(key);
             if (p.PermissionType === 'Delegated') bucket.delegated += 1;
             if (p.PermissionType === 'Application') bucket.application += 1;
+
+            const resource = p.ResourceDisplayName || p.ResourceAppId || 'Unknown resource';
+            const permValue = p.PermissionDisplayName || p.PermissionValue || 'Unknown permission';
+            const detail = `${p.PermissionType || 'Unknown'} | ${resource} | ${permValue}`;
+            appPermissionDetails.get(key).add(detail);
         }
 
         for (const a of assignments) {
@@ -662,11 +696,18 @@ function New-EnterpriseAppHtmlReport {
                     unknown: new Set()
                 });
             }
+
+            if (!appAssignedUsers.has(key)) {
+                appAssignedUsers.set(key, new Set());
+            }
+
             if (a.AssignedPrincipalType !== 'User') continue;
 
             const id = a.AssignedPrincipalId || `${a.AssignedPrincipalDisplayName}|${a.AssignedUserPrincipalName}`;
             const stat = appAssignmentUserStats.get(key);
+            const displayUser = a.AssignedUserPrincipalName || a.AssignedPrincipalDisplayName || id;
             stat.users.add(id);
+            appAssignedUsers.get(key).add(displayUser);
 
             switch (a.UserActivityState) {
                 case 'ActiveInWindow': stat.active.add(id); break;
@@ -685,6 +726,29 @@ function New-EnterpriseAppHtmlReport {
 
         function badge(type, text) {
             return `<span class="pill ${type}">${text}</span>`;
+        }
+
+        function esc(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function toListHtml(values, emptyText) {
+            if (!values || values.length === 0) {
+                return `<div class="small">${esc(emptyText)}</div>`;
+            }
+
+            const topValues = values.slice(0, 20);
+            const rows = topValues.map(v => `<div class="listitem">${esc(v)}</div>`).join('');
+            const overflow = values.length > topValues.length
+                ? `<div class="small">+${values.length - topValues.length} more</div>`
+                : '';
+
+            return `<div class="listbox">${rows}</div>${overflow}`;
         }
 
         function renderKpis() {
@@ -740,26 +804,30 @@ function New-EnterpriseAppHtmlReport {
             const rows = filtered.map(app => {
                 const key = app.AppObjectId || '';
                 const perm = appPermissionCounts.get(key) || { delegated: 0, application: 0 };
+                const permDetails = Array.from(appPermissionDetails.get(key) || []).sort((a, b) => a.localeCompare(b));
                 const stats = appAssignmentUserStats.get(key) || {
                     users: new Set(), active: new Set(), inactive: new Set(), disabled: new Set(), unknown: new Set()
                 };
+                const users = Array.from(appAssignedUsers.get(key) || []).sort((a, b) => a.localeCompare(b));
 
                 const consentPill = app.IsConsented ? badge('ok', 'Yes') : badge('warn', 'No');
                 const activityPill = app.HasAppSignInActivityInWindow ? badge('ok', 'Recorded') : badge('warn', 'None in window');
 
                 return `<tr>
                     <td>
-                        <strong>${app.AppDisplayName || '-'}</strong><br />
-                        <span class="small">${app.AppId || '-'}</span>
+                        <strong>${esc(app.AppDisplayName || '-')}</strong><br />
+                        <span class="small">${esc(app.AppId || '-')}</span>
                     </td>
                     <td>${consentPill}</td>
                     <td>
                         ${badge('muted', `Delegated: ${perm.delegated}`)}
                         ${badge('muted', `Application: ${perm.application}`)}
+                        ${toListHtml(permDetails, 'No permissions listed')}
                     </td>
                     <td>
                         ${badge('muted', `Users: ${stats.users.size}`)}
                         ${badge('muted', `Groups: ${app.DirectAssignedGroups || 0}`)}
+                        ${toListHtml(users, 'No assigned users')}
                     </td>
                     <td>
                         ${badge('ok', `Active: ${stats.active.size}`)}
