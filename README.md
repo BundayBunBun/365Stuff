@@ -64,6 +64,18 @@ Authentication behavior:
 - Device code is optional with `-UseDeviceCode`.
 - The script reuses an existing Graph session if it already has all required scopes.
 
+App-only (non-interactive, no user reauth prompts):
+
+- Use `-UseAppOnly -TenantId <tenant-id> -ClientId <app-id> -CertificateThumbprint <thumbprint>`.
+- The app registration must have these Microsoft Graph application permissions (admin consented):
+  - `Application.Read.All`
+  - `AppRoleAssignment.ReadWrite.All`
+  - `DelegatedPermissionGrant.Read.All`
+  - `Directory.Read.All`
+  - `AuditLog.Read.All`
+  - `User.Read.All`
+  - `Group.Read.All`
+
 Use device code authentication (recommended for Linux/headless environments):
 
 ```powershell
@@ -98,6 +110,12 @@ Include disabled enterprise app service principals:
 
 ```powershell
 .\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -IncludeDisabledServicePrincipals
+```
+
+App-only run example:
+
+```powershell
+.\Get-M365EnterpriseAppInventory.ps1 -OutputFolder .\output -UseAppOnly -TenantId "<tenant-id-guid>" -ClientId "<app-id-guid>" -CertificateThumbprint "<cert-thumbprint>"
 ```
 
 ## Linux quick start (installs requirements)

@@ -22,7 +22,19 @@ param(
     [switch]$UseBrowserAuth,
 
     [Parameter(Mandatory = $false)]
-    [switch]$SkipUserLookups
+    [switch]$SkipUserLookups,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$UseAppOnly,
+
+    [Parameter(Mandatory = $false)]
+    [string]$TenantId,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ClientId,
+
+    [Parameter(Mandatory = $false)]
+    [string]$CertificateThumbprint
 )
 
 Set-StrictMode -Version Latest
@@ -1015,6 +1027,10 @@ if ($UseDeviceCode -and $UseBrowserAuth) {
     throw 'Use either -UseDeviceCode or -UseBrowserAuth, not both.'
 }
 
+if ($UseAppOnly -and ($UseDeviceCode -or $UseBrowserAuth)) {
+    throw 'Do not combine -UseAppOnly with delegated auth switches (-UseDeviceCode or -UseBrowserAuth).'
+}
+
 $existingContext = Get-MgContext
 $canReuseContext = $false
 
@@ -1027,7 +1043,14 @@ if ($existingContext -and $existingContext.Scopes) {
     }
 }
 
-if (-not $canReuseContext) {
+if ($UseAppOnly) {
+    if ([string]::IsNullOrWhiteSpace($TenantId) -or [string]::IsNullOrWhiteSpace($ClientId) -or [string]::IsNullOrWhiteSpace($CertificateThumbprint)) {
+        throw 'For -UseAppOnly, provide -TenantId, -ClientId, and -CertificateThumbprint.'
+    }
+
+    Connect-MgGraph -TenantId $TenantId -ClientId $ClientId -CertificateThumbprint $CertificateThumbprint -ContextScope Process -NoWelcome
+}
+elseif (-not $canReuseContext) {
     if ($UseDeviceCode) {
         Connect-MgGraph -Scopes $requiredScopes -UseDeviceAuthentication -ContextScope Process -NoWelcome
     }
